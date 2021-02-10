@@ -2,6 +2,7 @@
 
 using System;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 
 namespace OpenTracing.Contrib.NetCore.Internal
@@ -33,6 +34,7 @@ namespace OpenTracing.Contrib.NetCore.Internal
                 _fetchForExpectedType = PropertyFetch.FetcherForProperty(propertyInfo);
                 _expectedType = objType;
             }
+
             return _fetchForExpectedType.Fetch(obj);
         }
 
@@ -51,13 +53,18 @@ namespace OpenTracing.Contrib.NetCore.Internal
             public static PropertyFetch FetcherForProperty(PropertyInfo propertyInfo)
             {
                 if (propertyInfo == null)
-                    return new PropertyFetch();     // returns null on any fetch.
+                    return new PropertyFetch(); // returns null on any fetch.
 
                 Type typedPropertyFetcher = typeof(TypedFetchProperty<,>);
                 Type instantiatedTypedPropertyFetcher = typedPropertyFetcher.GetTypeInfo().MakeGenericType(
                     propertyInfo.DeclaringType, propertyInfo.PropertyType);
 
-                return (PropertyFetch)Activator.CreateInstance(instantiatedTypedPropertyFetcher, propertyInfo);
+                Type propertyInfoType = typeof(PropertyInfo);
+                ConstructorInfo ctor = instantiatedTypedPropertyFetcher.GetConstructor(new[] {propertyInfoType});
+                ParameterExpression ctorParameter = Expression.Parameter(propertyInfoType);
+                Delegate expression = Expression.Lambda(Expression.New(ctor, ctorParameter), ctorParameter)
+                    .Compile();
+                return (PropertyFetch)expression.DynamicInvoke(propertyInfo);
             }
 
             /// <summary>
@@ -74,10 +81,12 @@ namespace OpenTracing.Contrib.NetCore.Internal
                 {
                     _propertyFetch = (Func<TObject, TProperty>)property.GetMethod.CreateDelegate(typeof(Func<TObject, TProperty>));
                 }
+
                 public override object Fetch(object obj)
                 {
                     return _propertyFetch((TObject)obj);
                 }
+
                 private readonly Func<TObject, TProperty> _propertyFetch;
             }
         }

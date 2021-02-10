@@ -14,17 +14,27 @@ namespace OpenTracing.Contrib.NetCore.MicrosoftSqlClient
     {
         public const string DiagnosticListenerName = "SqlClientDiagnosticListener";
 
-        private static readonly PropertyFetcher _activityCommand_RequestFetcher = new PropertyFetcher("Command");
-        private static readonly PropertyFetcher _exception_ExceptionFetcher = new PropertyFetcher("Exception");
+        private static Func<Type, PropertyFetcher> CommandFetcherFactoryMethod =>
+            _ => new PropertyFetcher("Command");
+
+        private static Func<Type, PropertyFetcher> ExceptionFetcherFactoryMethod =>
+            _ => new PropertyFetcher("Exception");
 
         private readonly MicrosoftSqlClientDiagnosticOptions _options;
         private readonly ConcurrentDictionary<object, ISpan> _spanStorage;
+        private readonly ConcurrentDictionary<Type, PropertyFetcher> _activityCommandFetchers;
+        private readonly ConcurrentDictionary<Type, PropertyFetcher> _exceptionFetchers;
 
-        public MicrosoftSqlClientDiagnostics(ILoggerFactory loggerFactory, ITracer tracer, IOptions<MicrosoftSqlClientDiagnosticOptions> options)
-           : base(loggerFactory, tracer, options?.Value)
+        public MicrosoftSqlClientDiagnostics(
+            ILoggerFactory loggerFactory,
+            ITracer tracer,
+            IOptions<MicrosoftSqlClientDiagnosticOptions> options)
+            : base(loggerFactory, tracer, options?.Value)
         {
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _spanStorage = new ConcurrentDictionary<object, ISpan>();
+            _activityCommandFetchers = new ConcurrentDictionary<Type, PropertyFetcher>();
+            _exceptionFetchers = new ConcurrentDictionary<Type, PropertyFetcher>();
         }
 
         protected override string GetListenerName() => DiagnosticListenerName;
@@ -44,68 +54,76 @@ namespace OpenTracing.Contrib.NetCore.MicrosoftSqlClient
 
         protected override void HandleEvent(string eventName, object untypedArg)
         {
+            var untypedArgType = untypedArg.GetType();
             switch (eventName)
             {
                 case MicrosoftSqlClientDiagnosticOptions.EventNames.WriteCommandBefore:
+                {
+                    var commandFetcher = _activityCommandFetchers.GetOrAdd(untypedArgType, CommandFetcherFactoryMethod);
+                    var cmd = (SqlCommand)commandFetcher.Fetch(untypedArg);
+
+                    var activeSpan = Tracer.ActiveSpan;
+
+                    if (activeSpan == null && !_options.StartRootSpans)
                     {
-                        var cmd = (SqlCommand)_activityCommand_RequestFetcher.Fetch(untypedArg);
-
-                        var activeSpan = Tracer.ActiveSpan;
-
-                        if (activeSpan == null && !_options.StartRootSpans)
+                        if (IsLogLevelTraceEnabled)
                         {
-                            if (IsLogLevelTraceEnabled)
-                            {
-                                Logger.LogTrace("Ignoring SQL command due to missing parent span");
-                            }
-                            return;
+                            Logger.LogTrace("Ignoring SQL command due to missing parent span");
                         }
 
-                        if (IgnoreEvent(cmd))
-                        {
-                            if (IsLogLevelTraceEnabled)
-                            {
-                                Logger.LogTrace("Ignoring SQL command due to IgnorePatterns");
-                            } 
-                            return;
-                        }
-
-                        string operationName = _options.OperationNameResolver(cmd);
-
-                        var span = Tracer.BuildSpan(operationName)
-                            .AsChildOf(activeSpan)
-                            .WithTag(Tags.SpanKind, Tags.SpanKindClient)
-                            .WithTag(Tags.Component, _options.ComponentName)
-                            .WithTag(Tags.DbInstance, cmd.Connection.Database)
-                            .WithTag(Tags.DbStatement, cmd.CommandText)
-                            .Start();
-
-                        _spanStorage.TryAdd(cmd, span);
+                        return;
                     }
+
+                    if (IgnoreEvent(cmd))
+                    {
+                        if (IsLogLevelTraceEnabled)
+                        {
+                            Logger.LogTrace("Ignoring SQL command due to IgnorePatterns");
+                        }
+
+                        return;
+                    }
+
+                    string operationName = _options.OperationNameResolver(cmd);
+
+                    var span = Tracer.BuildSpan(operationName)
+                        .AsChildOf(activeSpan)
+                        .WithTag(Tags.SpanKind, Tags.SpanKindClient)
+                        .WithTag(Tags.Component, _options.ComponentName)
+                        .WithTag(Tags.DbInstance, cmd.Connection.Database)
+                        .WithTag(Tags.DbStatement, cmd.CommandText)
+                        .Start();
+
+                    _spanStorage.TryAdd(cmd, span);
+                }
                     break;
 
                 case MicrosoftSqlClientDiagnosticOptions.EventNames.WriteCommandError:
-                    {
-                        var cmd = (SqlCommand)_activityCommand_RequestFetcher.Fetch(untypedArg);
-                        var ex = (Exception)_exception_ExceptionFetcher.Fetch(untypedArg);
+                {
+                    var commandFetcher = _activityCommandFetchers[untypedArgType];
+                    var cmd = (SqlCommand)commandFetcher.Fetch(untypedArg);
 
-                        if (_spanStorage.TryRemove(cmd, out var span))
-                        {
-                            span.SetException(ex);
-                            span.Finish();
-                        }
+                    var exceptionFetcher = _exceptionFetchers.GetOrAdd(untypedArgType, ExceptionFetcherFactoryMethod);
+                    var ex = (Exception)exceptionFetcher.Fetch(untypedArg);
+
+                    if (_spanStorage.TryRemove(cmd, out var span))
+                    {
+                        span.SetException(ex);
+                        span.Finish();
                     }
+                }
                     break;
 
                 case MicrosoftSqlClientDiagnosticOptions.EventNames.WriteCommandAfter:
-                    {
-                        var cmd = (SqlCommand)_activityCommand_RequestFetcher.Fetch(untypedArg);
+                {
+                    var commandFetcher = _activityCommandFetchers[untypedArgType];
+                    var cmd = (SqlCommand)commandFetcher.Fetch(untypedArg);
 
-                        if (_spanStorage.TryRemove(cmd, out var span))
-                        {
-                            span.Finish();
-                        }
+                    if (_spanStorage.TryRemove(cmd, out var span))
+                    {
+                        span.Finish();
                     }
+                }
                     break;
 
                 default:
