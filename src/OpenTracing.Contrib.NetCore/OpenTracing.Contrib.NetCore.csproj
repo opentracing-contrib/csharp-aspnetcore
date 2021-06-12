@@ -33,11 +33,11 @@ Instrumented components: HttpClient calls, ASP.NET Core, Entity Framework Core a
 
   <ItemGroup Condition="$(TargetFramework)=='netcoreapp3.1'">
     <!-- Main dependencies -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[3.1.8,4)" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="[3.1.8,4)" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="[3.1.8,4)" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="[3.1.8,4)" />
-    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="4.7.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[3.1.8,6)" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="[3.1.8,6)" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="[3.1.8,6)" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="[3.1.8,6)" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="5.0.1" />
     <!-- Instrumented libraries (which are not visible as actual dependencies) -->
     <PackageReference Include="Microsoft.Data.SqlClient" Version="1.1.3" PrivateAssets="All" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="[3.1.8,4)" PrivateAssets="All" />
